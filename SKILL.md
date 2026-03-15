@@ -1,7 +1,19 @@
 ---
 name: wordpress-selfhosted
-description: "Manage a self-hosted WordPress site via SSH+WP-CLI (primary) and WP REST API (when direct HTTPS access is available). Use when asked to write, draft, publish, update, or delete posts/pages on a self-hosted WordPress installation — including SEO optimization, categories/tags, featured images, author assignment, and proper post formatting. Designed for WordPress running on LXC, VPS, or bare-metal (not WordPress.com hosted). Requires: ssh, scp, curl, jq, wp-cli. Optional: op (1Password CLI for credential hydration). Network: user-configured WordPress host (LAN IP or public domain). Credentials: WP application password stored in 1Password (item: configurable)."
-metadata: { "openclaw": { "requires": { "bins": ["ssh", "scp", "curl", "jq", "wp-cli"] }, "os": ["darwin", "linux"] } }
+license: MIT
+description: "Manage a self-hosted WordPress site via SSH+WP-CLI (primary) and WP REST API (when direct HTTPS access is available). Use when asked to write, draft, publish, update, or delete posts/pages on a self-hosted WordPress installation — including SEO optimization, categories/tags, featured images, author assignment, and proper post formatting. Designed for WordPress running on LXC, VPS, or bare-metal (not WordPress.com hosted). Requires: ssh, scp, curl, jq, wp (WP-CLI). Optional: op (1Password CLI for credential hydration). Network: user-configured WordPress host (LAN IP or public domain). Credentials: WP application password stored in 1Password (item: configurable)."
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - ssh
+        - scp
+        - curl
+        - jq
+        - wp
+    os:
+      - darwin
+      - linux
 ---
 
 # WordPress Self-Hosted
