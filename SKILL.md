@@ -1,19 +1,8 @@
 ---
 name: wordpress-selfhosted
 license: MIT
-description: "Manage a self-hosted WordPress site via SSH+WP-CLI (primary) and WP REST API (when direct HTTPS access is available). Use when asked to write, draft, publish, update, or delete posts/pages on a self-hosted WordPress installation — including SEO optimization, categories/tags, featured images, author assignment, and proper post formatting. Designed for WordPress running on LXC, VPS, or bare-metal (not WordPress.com hosted). Requires: ssh, scp, curl, jq, wp (WP-CLI). Optional: op (1Password CLI for credential hydration). Network: user-configured WordPress host (LAN IP or public domain). Credentials: WP application password stored in 1Password (item: configurable)."
-metadata:
-  openclaw:
-    requires:
-      bins:
-        - ssh
-        - scp
-        - curl
-        - jq
-        - wp
-    os:
-      - darwin
-      - linux
+description: "Manage a self-hosted WordPress site via SSH+WP-CLI (primary) and WP REST API (when direct HTTPS access is available). Use when asked to write, draft, publish, update, or delete posts/pages on a self-hosted WordPress installation — including SEO optimization, categories/tags, featured images, author assignment, and proper post formatting. Designed for WordPress running on LXC, VPS, or bare-metal (not WordPress.com hosted). Requires: ssh, scp, curl, jq, wp (WP-CLI). Optional: op (1Password CLI for credential hydration via SSH agent socket). Network: SSH to user-configured WordPress host (LAN IP or public domain). Credentials: SSH key (via ssh-agent or 1Password SSH agent on macOS), WP application password (stored in 1Password, item name configurable via WP_1P_ITEM). Config values read from TOOLS.md: WP_HOST, WP_USER, WP_SSH_USER, WP_ROOT, WP_1P_ITEM. File writes: /tmp/post-content.html, /tmp/*.html (temporary content files SCP'd to host). Uses -o StrictHostKeyChecking=no for SSH (see Security Notes)."
+metadata: { "openclaw": { "emoji": "📝", "requires": { "bins": ["ssh", "scp", "curl", "jq", "wp"], "anyBins": ["op"] }, "os": ["darwin", "linux"] } }
 ---
 
 # WordPress Self-Hosted
@@ -209,6 +198,17 @@ Append at end of AI-authored posts:
 <p style="font-size:14px;color:#888888"><em>Written by <strong>Your Agent Name</strong> — AI agent (OpenClaw / Claude)<br>First-person perspective from an AI execution engine</em></p>
 <!-- /wp:paragraph -->
 ```
+
+## Security Notes
+
+**`StrictHostKeyChecking=no`:** Used throughout SSH/SCP commands because this skill targets user-configured hosts on trusted LANs (e.g., Proxmox LXC containers). In automation contexts where the host IP is known and the network is controlled, disabling host-key checking avoids interactive prompts that break non-interactive exec calls. Users connecting over untrusted networks should replace with `StrictHostKeyChecking=accept-new` or pre-populate `~/.ssh/known_hosts`.
+
+**1Password SSH agent socket:** On macOS, SSH commands reference `SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"` to authenticate via the 1Password SSH agent. This is the standard macOS 1Password agent path — it allows SSH key signing via Touch ID without writing private keys to disk. The agent socket is only accessed when `pty: true` is set on exec calls (required for Touch ID prompt). On Linux or when using a different SSH agent, the standard `SSH_AUTH_SOCK` is used instead.
+
+**Credentials used:**
+- **SSH key** — via ssh-agent (1Password agent on macOS, standard agent on Linux). Never written to disk by this skill.
+- **WP application password** — retrieved at runtime via `op item get` (1Password CLI) when using the REST API path. Not cached to disk.
+- **Config values** (WP_HOST, WP_USER, WP_SSH_USER, WP_ROOT, WP_1P_ITEM) — read from the agent's TOOLS.md, not env vars. No gating required.
 
 ## Featured Images
 
