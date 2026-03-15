@@ -1,36 +1,30 @@
 # wordpress-selfhosted
 
-An OpenClaw skill for managing self-hosted WordPress sites via WP REST API and SSH+WP-CLI.
+An agent skill for managing self-hosted WordPress sites via SSH+WP-CLI and WP REST API.
 
 ## What It Does
 
-- **Create, draft, publish, update, and delete** posts and pages via WP REST API
+- **Create, draft, publish, update, and delete** posts and pages
 - **SEO optimization** — meta descriptions, focus keywords, slugs, Yoast/Rank Math support
 - **Author assignment** — separate human and AI agent author profiles
 - **Categories, tags, and featured images**
-- **SSH+WP-CLI fallback** for low-level ops (plugin installs, cache flush, DB work)
 - **1Password integration** for credential hydration
 
 ## Requirements
 
-- `curl`, `jq` — for REST API calls
-- `ssh`, `scp`, `wp-cli` — for SSH+WP-CLI fallback
+- `ssh`, `scp`, `wp-cli` — primary method
+- `curl`, `jq` — for REST API (when available)
 - `op` (optional) — 1Password CLI for credential hydration
 - A self-hosted WordPress install (LXC, VPS, bare-metal)
-- A WordPress application password for API auth
 
 ## Quick Setup
 
-1. Create a WP application password via SSH:
-   ```bash
-   wp user application-password create <username> "MyAgent-OpenClaw" --porcelain
-   ```
-2. Store the output in 1Password (or your preferred secret manager)
-3. Update `TOOLS.md` with your `WP_HOST`, `WP_USER`, `WP_SSH_USER`, `WP_ROOT`, and `WP_1P_ITEM`
+1. Update `TOOLS.md` with your `WP_HOST`, `WP_USER`, `WP_SSH_USER`, `WP_ROOT`, and `WP_1P_ITEM`
+2. Confirm SSH access works: `ssh <WP_SSH_USER>@<WP_HOST> 'wp --info'`
 
 ## Usage
 
-Once configured, ask your OpenClaw agent things like:
+Once configured, ask your agent things like:
 
 - *"Write a blog post about X and publish it as a draft"*
 - *"Update the resume page with this new content"*
@@ -39,7 +33,11 @@ Once configured, ask your OpenClaw agent things like:
 
 ## Design
 
-Prefers **WP REST API** over SSH for all standard CRUD — no PTY, no Touch ID prompts, works over LAN or public domain. SSH+WP-CLI is reserved for operations the REST API can't handle.
+**SSH+WP-CLI is primary.** WP REST API is supported but conditional — it requires direct HTTPS access with no proxy stripping Authorization headers. Common self-hosted setups (behind Cloudflare, LAN-only HTTP, Wordfence) break REST API auth. The skill includes a decision tree to determine which method to use.
+
+## Compatibility
+
+Works with any agent that can read markdown — OpenClaw, Claude Code, Codex, Cursor, or any tool that accepts instruction files. The `SKILL.md` frontmatter is OpenClaw/ClawHub packaging; the runbook content is agent-agnostic.
 
 ## License
 
