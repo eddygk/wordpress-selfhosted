@@ -1,7 +1,7 @@
 ---
 name: wordpress-selfhosted
 license: MIT
-description: "Manage a self-hosted WordPress site via SSH+WP-CLI (primary) and WP REST API (when direct HTTPS access is available). Use when asked to write, draft, publish, update, or delete posts/pages on a self-hosted WordPress installation — including SEO optimization, categories/tags, featured images, author assignment, and proper post formatting. Designed for WordPress running on LXC, VPS, or bare-metal (not WordPress.com hosted). Requires: ssh, scp, curl, jq, wp (WP-CLI). Optional: op (1Password CLI for credential hydration via SSH agent socket). Network: SSH to user-configured WordPress host (LAN IP or public domain). Credentials: SSH key (via ssh-agent or 1Password SSH agent on macOS), WP application password (stored in 1Password, item name configurable via WP_1P_ITEM). Config values read from TOOLS.md: WP_HOST, WP_USER, WP_SSH_USER, WP_ROOT, WP_1P_ITEM. File writes: /tmp/post-content.html, /tmp/*.html (temporary content files SCP'd to host). Uses -o StrictHostKeyChecking=no for SSH (see Security Notes)."
+description: "Manage a self-hosted WordPress site via SSH+WP-CLI (primary) and WP REST API (when direct HTTPS access is available). Use when asked to write, draft, publish, update, or delete posts/pages on a self-hosted WordPress installation — including SEO optimization, categories/tags, featured images, author assignment, and proper post formatting. Designed for WordPress running on LXC, VPS, or bare-metal (not WordPress.com hosted). Requires: ssh, scp, curl, jq, wp (WP-CLI). Optional: op (1Password CLI for credential hydration via SSH agent socket). Network: SSH to user-configured WordPress host (LAN IP or public domain). Credentials: SSH key (via ssh-agent or 1Password SSH agent on macOS), WP application password (stored in 1Password, item name configurable via WP_1P_ITEM). Required TOOLS.md config: WP_HOST, WP_USER, WP_SSH_USER, WP_ROOT, WP_1P_ITEM — skill will not function without these. File writes: /tmp/post-content.html, /tmp/*.html (temporary content files SCP'd to host, created mode 600, cleaned up after use). Uses -o StrictHostKeyChecking=no for SSH by default; see Security Notes for hardened alternatives."
 metadata: { "openclaw": { "emoji": "📝", "requires": { "bins": ["ssh", "scp", "curl", "jq", "wp"], "anyBins": ["op"] }, "os": ["darwin", "linux"] } }
 ---
 
@@ -40,11 +40,13 @@ Use for all content operations when REST API is unavailable. Also the only optio
 
 ```bash
 # macOS with 1Password SSH agent
+# Remove -o StrictHostKeyChecking=no if host key is in known_hosts (see Security Notes)
 SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock" \
   ssh -o StrictHostKeyChecking=no <ssh-user>@<wp-host> \
   'cd <wp-root> && wp <command>'
 
 # Linux / other SSH agents — SSH_AUTH_SOCK is already set in most environments
+# Remove -o StrictHostKeyChecking=no if host key is in known_hosts (see Security Notes)
 ssh -o StrictHostKeyChecking=no <ssh-user>@<wp-host> \
   'cd <wp-root> && wp <command>'
 ```
@@ -59,6 +61,27 @@ Large content bodies should be written to a local temp file, SCP'd over, then pa
 SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock" \
   scp -o StrictHostKeyChecking=no /tmp/file.html <ssh-user>@<wp-host>:/tmp/
 ```
+
+### Temp File Handling
+
+Content files written to `/tmp/` should use restrictive permissions and be cleaned up after use:
+
+```bash
+# Write with restrictive permissions (owner-only read/write)
+umask 077 && cat > /tmp/post-content.html << 'CONTENT'
+...your HTML content...
+CONTENT
+
+# SCP to host (file is already mode 600 due to umask)
+SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock" \
+  scp -o StrictHostKeyChecking=no /tmp/post-content.html <ssh-user>@<wp-host>:/tmp/
+
+# After use, clean up local and remote temp files
+rm -f /tmp/post-content.html
+ssh <ssh-user>@<wp-host> 'rm -f /tmp/post-content.html'
+```
+
+Temp files contain post HTML content only — not credentials. App passwords retrieved via `op` are captured into shell variables and never written to disk.
 
 ## WP REST API (When Direct HTTPS Available)
 
@@ -203,11 +226,17 @@ Append at end of AI-authored posts:
 
 **`StrictHostKeyChecking=no`:** Used throughout SSH/SCP commands because this skill targets user-configured hosts on trusted LANs (e.g., Proxmox LXC containers). In automation contexts where the host IP is known and the network is controlled, disabling host-key checking avoids interactive prompts that break non-interactive exec calls. Users connecting over untrusted networks should replace with `StrictHostKeyChecking=accept-new` or pre-populate `~/.ssh/known_hosts`.
 
+**Recommended alternative for persistent setups:** Pre-populate the host key once, then remove `-o StrictHostKeyChecking=no` from all commands:
+```bash
+ssh-keyscan -H <wp-host> >> ~/.ssh/known_hosts
+```
+For first-time/ephemeral connections, use `-o StrictHostKeyChecking=accept-new` instead — trusts on first connect, rejects changed keys.
+
 **1Password SSH agent socket:** On macOS, SSH commands reference `SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"` to authenticate via the 1Password SSH agent. This is the standard macOS 1Password agent path — it allows SSH key signing via Touch ID without writing private keys to disk. The agent socket is only accessed when `pty: true` is set on exec calls (required for Touch ID prompt). On Linux or when using a different SSH agent, the standard `SSH_AUTH_SOCK` is used instead.
 
 **Credentials used:**
 - **SSH key** — via ssh-agent (1Password agent on macOS, standard agent on Linux). Never written to disk by this skill.
-- **WP application password** — retrieved at runtime via `op item get` (1Password CLI) when using the REST API path. Not cached to disk.
+- **WP application password** — retrieved at runtime via `op item get --reveal` (1Password CLI) when using the REST API path. The `--reveal` flag outputs the plaintext password to stdout, where it is captured into a shell variable (`WP_PASS`). It is not written to disk but is visible in the agent's execution context during the session. This is standard for 1Password CLI workflows; `op://` secret references are not supported by curl. Not cached to disk.
 - **Config values** (WP_HOST, WP_USER, WP_SSH_USER, WP_ROOT, WP_1P_ITEM) — read from the agent's TOOLS.md, not env vars. No gating required.
 
 ## Featured Images
