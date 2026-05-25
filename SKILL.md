@@ -178,90 +178,26 @@ ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp post update '"$POST_ID"' --post_sta
 
 ## Editing Existing Content
 
-The Quick Start above *creates* new posts. Editing content that already exists has two problems the create flow doesn't: finding where the text actually lives, and changing it in place without rebuilding the rest of the post by hand.
+The Quick Start above *creates* posts. Editing existing content needs two things the create flow doesn't: finding where the text actually lives, and changing it in place without rebuilding the post by hand.
 
-### Find where the string lives
+**Find where a string lives** — run `scripts/locate-string.sh "<distinctive fragment>"`. It checks, in the order strings most commonly live, `post_content` → `wp_options` → `wp_postmeta` → active-theme files (deps excluded) and reports the hits. Check the DB *before* theme files: block/hybrid themes (Sage, FSE) routinely render raw HTML stored in a page, so text that looks template-driven usually isn't. Search a short, distinctive middle fragment, not a whole line — separators (`|`, `·`), entities (`&amp;`), and smart quotes differ between rendered and stored text. (A string found only in a compiled `public/`/`dist/` bundle is built at build time — fix the theme source and rebuild, not the bundle.)
 
-A visible string can live in several very different places, each needing a different fix. Check in this order — most common and cheapest first — and stop when you find it:
-
-1. **Page/post content (`post_content`)** — most user-visible copy lives here, including large blocks of hand-written HTML. Block and hybrid themes (Sage, FSE) routinely render raw HTML stored in a page, so text that *looks* like it must be in a template often isn't. Check the database before grepping theme files — it's the more common home and saves a wasted hunt.
-
-   ```bash
-   ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp db query \
-     "SELECT ID, post_title, post_type, post_status FROM wp_posts \
-      WHERE post_content LIKE '"'"'%SEARCH FRAGMENT%'"'"'"'
-   ```
-
-2. **Options (`wp_options`)** — site title, tagline, widget text, theme-mod settings, plugin config.
-
-   ```bash
-   ssh ... 'cd <wp-root> && wp db query \
-     "SELECT option_id, option_name FROM wp_options WHERE option_value LIKE '"'"'%SEARCH FRAGMENT%'"'"'"'
-   ```
-
-3. **Post meta (`wp_postmeta`)** — ACF fields, page-builder payloads, SEO fields (Yoast/Rank Math).
-
-   ```bash
-   ssh ... 'cd <wp-root> && wp db query \
-     "SELECT meta_id, post_id, meta_key FROM wp_postmeta WHERE meta_value LIKE '"'"'%SEARCH FRAGMENT%'"'"'"'
-   ```
-
-4. **Theme files** — only if the string isn't in the DB. Grep the *active* theme, and exclude `node_modules`/`vendor` or matches inside dependencies will bury the real hit:
-
-   ```bash
-   ssh ... 'cd <wp-root>/wp-content/themes/<active-theme> && \
-     grep -rni "SEARCH FRAGMENT" . --include="*.php" --include="*.blade.php" --include="*.js" \
-     | grep -vE "node_modules|/vendor/"'
-   ```
-   If the string shows up only in a compiled bundle under `public/`/`dist/` (not in `resources/`), it's baked in at build time — edit the source and rebuild (`npm run build` / `yarn build` in the theme dir), never the compiled file.
-
-**Pick a distinctive fragment, not the whole line.** Separators (`|`, `·`), HTML entities (`&amp;`), and smart quotes frequently differ between what renders in the browser and what's stored in the DB, so a `LIKE` on a short literal middle chunk matches reliably where pasting the entire string fails.
-
-### Edit post content in place (round-trip)
-
-Don't reconstruct a post body from scratch. Pull the stored content to a local file, edit it precisely, push it back. This changes only what you touched and leaves a clean revision behind:
+**Edit post content in place** — pull, edit locally, push back; never reconstruct the body:
 
 ```bash
-# 1. Pull current content to a local file — this is also your rollback copy
 ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp post get <ID> --field=post_content' > /tmp/post-<ID>.html
-
-# 2. Edit /tmp/post-<ID>.html locally, changing only the target strings
-
-# 3. Push it back, then confirm the new content landed
-SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock" \
-  scp -o StrictHostKeyChecking=accept-new /tmp/post-<ID>.html <ssh-user>@<wp-host>:/tmp/
-ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp post update <ID> /tmp/post-<ID>.html'
+# edit /tmp/post-<ID>.html (only the target strings — keep it as your rollback copy), then:
+scp /tmp/post-<ID>.html <ssh-user>@<wp-host>:/tmp/ && \
+  ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp post update <ID> /tmp/post-<ID>.html'
 ```
 
-Editing locally instead of running `sed` on the host sidesteps shell-quoting and locale pitfalls with HTML, pipe characters, and multibyte glyphs (`·`, em dashes, smart quotes). Keep the original `/tmp/post-<ID>.html` until you've verified the live site — re-running `wp post update <ID>` against the unedited copy rolls it back.
-
-For a value in `wp_options` or `wp_postmeta`, update it directly rather than round-tripping:
-```bash
-ssh ... 'cd <wp-root> && wp option update <option_name> "<new value>"'
-ssh ... 'cd <wp-root> && wp post meta update <post_id> <meta_key> "<new value>"'
-```
-
-`wp search-replace 'old' 'new' wp_posts --dry-run` is the right tool for a true site-wide string swap, but it also rewrites every revision and gives you no diff to inspect — for a single known edit, prefer the round-trip. Always `--dry-run` first if you do use it.
+Editing locally avoids host-side `sed` quoting/locale pitfalls with HTML, pipes, and multibyte glyphs (`·`, em dashes). For an options/postmeta value, update it directly (`wp option update` / `wp post meta update`). Prefer this round-trip over `wp search-replace` for a single known edit — search-replace rewrites every revision and gives no diff (always `--dry-run` first if you use it).
 
 ## Cache Invalidation & Verifying Changes
 
-WP-CLI writes straight to the database, so a change is persisted the moment `wp post update` returns — but visitors can still be served the old version through one or more cache layers. After any content edit, flush WordPress first:
+A WP-CLI write is persisted the moment `wp post update` returns, but caches can still serve the old version. After any edit, run `scripts/purge-verify.sh <public-url> "<new string>"`: it flushes the object cache + transients, flags active cache/CDN plugins, then fetches the public URL from outside the LAN and confirms the new string is live (reading `cf-cache-status`). The official `cloudflare` plugin auto-purges the edge on update, so a `HIT` is fine **as long as the fetched HTML already shows the new content**. Always verify externally — an internal/DB check can pass while the edge is stale.
 
-```bash
-ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp cache flush && wp transient delete --all'
-```
-
-Then handle whatever else caches:
-- **Page-cache plugins** (WP Rocket, W3 Total Cache, LiteSpeed) — find them with `wp plugin list --status=active`. Most expose a flush command, e.g. `wp rocket clean --confirm` or `wp w3-total-cache flush all`.
-- **Cloudflare** — if the official `cloudflare` plugin is active, it auto-purges the edge on post update, so a manual purge is usually unnecessary. Verify rather than assume (below). Without that plugin, purge the apex via the Cloudflare dashboard or API.
-
-**Always confirm from *outside* the LAN.** Fetching the public URL and grepping for the change is the only check that proves what a real visitor sees — internal/DB checks can pass while the edge still serves stale HTML:
-
-```bash
-curl -sL --compressed "https://<domain>/?cb=$(date +%s)" | grep -i "new string"
-curl -sI "https://<domain>/" | grep -i "cf-cache-status"
-```
-`cf-cache-status: HIT` is fine **as long as the fetched HTML already shows the new content** — it just means the edge re-cached the updated page. `HIT` with stale content means a purge is still needed.
+> Full manual runbook (raw queries, edge cases, plugin-specific flush commands): `references/editing-existing-content.md` — read it only when the scripts can't be used.
 
 ## Authors
 
