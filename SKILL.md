@@ -1,7 +1,7 @@
 ---
 name: wordpress-selfhosted
 license: MIT
-description: "Manage a self-hosted WordPress site via SSH+WP-CLI (primary) and WP REST API (when direct HTTPS access is available). Use when asked to write, draft, publish, update, or delete posts/pages on a self-hosted WordPress installation — including SEO optimization, categories/tags, featured images, author assignment, and proper post formatting. Designed for WordPress running on LXC, VPS, or bare-metal (not WordPress.com hosted). Requires: ssh, scp, curl, jq, wp (WP-CLI). Optional: op (1Password CLI for credential hydration via SSH agent socket). Network: SSH to user-configured WordPress host (LAN IP or public domain). Credentials: SSH key (via ssh-agent or 1Password SSH agent on macOS), WP application password (stored in 1Password, item name configurable via WP_1P_ITEM). Required env vars (gated; set via openclaw.json skills.entries or shell environment): WP_HOST, WP_SSH_USER, WP_ROOT. Optional config (TOOLS.md or env): WP_USER, WP_1P_ITEM. File writes: /tmp/post-content.html, /tmp/*.html (temporary content files SCP'd to host, created mode 600, cleaned up after use). Uses -o StrictHostKeyChecking=accept-new for SSH by default (trust-on-first-use); see Security Notes for alternatives."
+description: "Create, edit, publish, or delete content on a self-hosted WordPress site over SSH+WP-CLI (or the REST API when the host is reachable directly over HTTPS): posts, pages, and the visible text on them. Use it to draft and publish posts (with SEO/Yoast meta, categories, tags, featured images, author assignment), edit existing copy (header, hero, footer, about page), fix a typo on a live page, find where a string lives across the database or theme and replace it, and purge caches after a change — down to a single one-line edit. For WordPress the user hosts themselves on LXC, VPS, or bare-metal, often behind Cloudflare or a reverse proxy (typically signaled by an SSH login plus a wp-root path). NOT for WordPress.com-hosted blogs, theme CSS/layout or plugin development, or server-to-server site migrations."
 metadata: { "openclaw": { "emoji": "📝", "requires": { "bins": ["ssh", "scp", "curl", "jq", "wp"], "anyBins": ["op"], "env": ["WP_HOST", "WP_SSH_USER", "WP_ROOT"] }, "os": ["darwin", "linux"] } }
 ---
 
@@ -16,6 +16,10 @@ Manage a self-hosted WordPress site via SSH+WP-CLI (primary) or WP REST API (whe
 - `WP_USER` — WordPress username (optional; set in TOOLS.md or env)
 - `WP_1P_ITEM` — 1Password item name for app password (optional; set in TOOLS.md or env)
 
+**Helper scripts** (in `scripts/`, run over SSH, read the env vars above):
+`create-post.sh`, `set-post-meta.sh`, `set-featured-image.sh`, `locate-string.sh`, `purge-verify.sh`.
+Prefer these for their deterministic step — the body keeps only the judgment.
+
 ## Connection Decision Tree
 
 **Use SSH+WP-CLI when:**
@@ -24,161 +28,62 @@ Manage a self-hosted WordPress site via SSH+WP-CLI (primary) or WP REST API (whe
 - `SITEURL` is `https://` but you're connecting over HTTP (SSL mismatch blocks app passwords)
 - You need plugin/theme/DB/cache operations (REST can't do these anyway)
 
-**Use REST API when:**
-- You have direct HTTPS access to the WordPress host (no proxy stripping headers)
-- `SITEURL` matches the URL you're calling (no SSL mismatch)
-- Verify first: `curl -s "https://<wp-host>/wp-json/" | jq '.authentication'` — must return non-empty
-
-⚠️ **Common blockers for REST API auth:**
-- Cloudflare (and most reverse proxies) strip `Authorization` headers — REST API auth will fail via public domain
-- WordPress requires SSL for application passwords — HTTP LAN access fails even if app passwords are created
-- Wordfence can disable application passwords entirely (`wf_prevent_application_passwords` option)
+**Use REST API when:** you have direct HTTPS access (no proxy stripping headers) and `SITEURL` matches the URL you're calling. Verify with `curl -s "https://<wp-host>/wp-json/" | jq '.authentication'` (must be non-empty). Commands + app-password setup: **`references/rest-api.md`**. Common blockers: Cloudflare/proxies strip `Authorization`; WordPress requires SSL for app passwords (HTTP LAN fails); Wordfence can disable app passwords entirely.
 
 ## SSH + WP-CLI (Primary)
 
-Use for all content operations when REST API is unavailable. Also the only option for plugin installs, cache flush, DB operations, file management.
+Use for all content operations, and the only option for plugin/theme/DB/cache work.
 
 ```bash
-# macOS with 1Password SSH agent
-# Remove -o StrictHostKeyChecking=accept-new if host key is in known_hosts (see Security Notes)
+# macOS with 1Password SSH agent (drop -o StrictHostKeyChecking=accept-new once the host key is in known_hosts)
 SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock" \
-  ssh -o StrictHostKeyChecking=accept-new <ssh-user>@<wp-host> \
-  'cd <wp-root> && wp <command>'
+  ssh -o StrictHostKeyChecking=accept-new <ssh-user>@<wp-host> 'cd <wp-root> && wp <command>'
 
 # Linux / other SSH agents — SSH_AUTH_SOCK is already set in most environments
-# Remove -o StrictHostKeyChecking=accept-new if host key is in known_hosts (see Security Notes)
-ssh -o StrictHostKeyChecking=accept-new <ssh-user>@<wp-host> \
-  'cd <wp-root> && wp <command>'
+ssh -o StrictHostKeyChecking=accept-new <ssh-user>@<wp-host> 'cd <wp-root> && wp <command>'
 ```
 
-⚠️ **macOS + 1Password users:** Always use `pty: true` on exec tool calls — the 1Password agent needs a PTY for Touch ID signing. Without it: `communication with agent failed`.
+⚠️ **macOS + 1Password:** use `pty: true` on exec calls — the agent needs a PTY for Touch ID signing, else `communication with agent failed`.
 
-### SCP (file upload)
+### File upload & temp handling
 
-Large content bodies should be written to a local temp file, SCP'd over, then passed via `$(cat /tmp/file)` — avoids shell quoting issues with HTML/special chars.
-
-```bash
-SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock" \
-  scp -o StrictHostKeyChecking=accept-new /tmp/file.html <ssh-user>@<wp-host>:/tmp/
-```
-
-### Temp File Handling
-
-Content files written to `/tmp/` should use restrictive permissions and be cleaned up after use:
+Write large content bodies to a local temp file and SCP them over (avoids shell-quoting issues with HTML). Use a restrictive umask and clean up after:
 
 ```bash
-# Write with restrictive permissions (owner-only read/write)
 umask 077 && cat > /tmp/post-content.html << 'CONTENT'
-...your HTML content...
+...Gutenberg HTML...
 CONTENT
-
-# SCP to host (file is already mode 600 due to umask)
 SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock" \
   scp -o StrictHostKeyChecking=accept-new /tmp/post-content.html <ssh-user>@<wp-host>:/tmp/
-
-# After use, clean up local and remote temp files
-rm -f /tmp/post-content.html
-ssh <ssh-user>@<wp-host> 'rm -f /tmp/post-content.html'
+# after use:
+rm -f /tmp/post-content.html && ssh <ssh-user>@<wp-host> 'rm -f /tmp/post-content.html'
 ```
 
-Temp files contain post HTML content only — not credentials. App passwords retrieved via `op` are captured into shell variables and never written to disk.
+Temp files hold post HTML only — never credentials. (The `create-post.sh` / `set-featured-image.sh` helpers do this upload + cleanup for you.)
 
-## WP REST API (When Direct HTTPS Available)
+## Create & Publish a Post
 
-No PTY, no Touch ID, single HTTP call. Use only when connection decision tree above confirms it will work.
-
-```bash
-WP_USER="<wp-username>"
-WP_PASS=$(op item get "<1p-item-name>" --fields password --reveal)
-WP_BASE="https://<wp-host>/wp-json/wp/v2"
-
-# Verify auth works before proceeding
-curl -s -u "$WP_USER:$WP_PASS" "$WP_BASE/users/me" | jq '{id, name}'
-
-# List posts
-curl -s -u "$WP_USER:$WP_PASS" "$WP_BASE/posts?per_page=20&status=any" | jq '[.[] | {id, title: .title.rendered, status}]'
-
-# Get post content (raw blocks)
-curl -s -u "$WP_USER:$WP_PASS" "$WP_BASE/posts/<ID>?context=edit" | jq -r '.content.raw'
-
-# Create post (draft)
-curl -s -X POST -u "$WP_USER:$WP_PASS" "$WP_BASE/posts" \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Post Title","content":"<p>Body</p>","status":"draft"}'
-
-# Update post content
-curl -s -X POST -u "$WP_USER:$WP_PASS" "$WP_BASE/posts/<ID>" \
-  -H "Content-Type: application/json" \
-  -d "{\"content\": $(cat /tmp/content.html | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}"
-
-# Publish
-curl -s -X POST -u "$WP_USER:$WP_PASS" "$WP_BASE/posts/<ID>" \
-  -H "Content-Type: application/json" \
-  -d '{"status": "publish"}'
-```
-
-**To create an app password:**
-```bash
-wp user application-password create <username> "MyAgent" --porcelain
-```
-Store output in 1Password. Note: passwords are hashed in the DB — you can't recover them later.
-
-## Quick Start Workflow (WP-CLI)
-
-### 0. Pre-Write (gather context)
-
-```bash
-ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp post list --post_status=publish --fields=ID,post_title,post_name --format=json 2>/dev/null' | jq '[.[] | {id: .ID, title: .post_title, slug: .post_name}]'
-```
-
-Pick 2–3 related posts to link contextually in the content body.
-
-### 1. Write content to temp file locally
-
-Write Gutenberg HTML to `/tmp/post-content.html`, then SCP to host.
-
-### 2. Create Draft
-
-```bash
-ssh <ssh-user>@<wp-host> 'cd <wp-root> && \
-  wp post create /tmp/post-content.html \
-  --post_title="Post Title" \
-  --post_status=draft \
-  --post_author=<user-id> \
-  --porcelain 2>/dev/null'
-# Returns post ID
-```
-
-### 3. Set Metadata
-
-```bash
-POST_ID=123
-ssh <ssh-user>@<wp-host> 'cd <wp-root> && \
-  wp post term set '"$POST_ID"' category <slug> && \
-  wp post term set '"$POST_ID"' post_tag <tag1> <tag2> && \
-  wp post meta update '"$POST_ID"' _yoast_wpseo_metadesc "Meta description 120-155 chars" && \
-  wp post meta update '"$POST_ID"' _yoast_wpseo_focuskw "focus keyphrase" 2>/dev/null'
-```
-
-### 4. SEO Checklist
-
-Before publishing, verify:
-- [ ] Meta description set (120–155 chars)
-- [ ] Focus keyphrase set
-- [ ] 2–3 internal links to related posts
-- [ ] 5–7 tags
-- [ ] Categories assigned
-- [ ] Featured image set (optional but recommended)
-
-### 5. Publish
-
-```bash
-ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp post update '"$POST_ID"' --post_status=publish 2>/dev/null'
-```
+1. **Gather context** — list existing posts to link 2–3 internally:
+   ```bash
+   ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp post list --post_status=publish --fields=ID,post_title,post_name --format=json'
+   ```
+2. **Write the body** to a local `.html` file in Gutenberg block format — see **`references/post-format.md`** (blocks + optional author signature).
+3. **Create** (returns the new ID):
+   ```bash
+   scripts/create-post.sh --file /tmp/post-content.html --title "Post Title" --status draft --author <user-id>
+   ```
+4. **Set taxonomy + SEO**:
+   ```bash
+   scripts/set-post-meta.sh <ID> --category <slug> --tags "tag1 tag2" \
+     --metadesc "120–155 char description" --focuskw "focus keyphrase"
+   ```
+5. **Featured image** (optional): `scripts/set-featured-image.sh <ID> /path/to/image.png "Title"`
+6. **SEO check before publishing**: meta description (120–155 chars), focus keyphrase, 2–3 internal links, 5–7 tags, category, featured image.
+7. **Publish**: `ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp post update <ID> --post_status=publish'`
 
 ## Editing Existing Content
 
-The Quick Start above *creates* posts. Editing existing content needs two things the create flow doesn't: finding where the text actually lives, and changing it in place without rebuilding the post by hand.
+The flow above *creates* posts. Editing existing content needs two things it doesn't: finding where the text actually lives, and changing it in place without rebuilding the post by hand.
 
 **Find where a string lives** — run `scripts/locate-string.sh "<distinctive fragment>"`. It checks, in the order strings most commonly live, `post_content` → `wp_options` → `wp_postmeta` → active-theme files (deps excluded) and reports the hits. Check the DB *before* theme files: block/hybrid themes (Sage, FSE) routinely render raw HTML stored in a page, so text that looks template-driven usually isn't. Search a short, distinctive middle fragment, not a whole line — separators (`|`, `·`), entities (`&amp;`), and smart quotes differ between rendered and stored text. (A string found only in a compiled `public/`/`dist/` bundle is built at build time — fix the theme source and rebuild, not the bundle.)
 
@@ -197,77 +102,23 @@ Editing locally avoids host-side `sed` quoting/locale pitfalls with HTML, pipes,
 
 A WP-CLI write is persisted the moment `wp post update` returns, but caches can still serve the old version. After any edit, run `scripts/purge-verify.sh <public-url> "<new string>"`: it flushes the object cache + transients, flags active cache/CDN plugins, then fetches the public URL from outside the LAN and confirms the new string is live (reading `cf-cache-status`). The official `cloudflare` plugin auto-purges the edge on update, so a `HIT` is fine **as long as the fetched HTML already shows the new content**. Always verify externally — an internal/DB check can pass while the edge is stale.
 
-> Full manual runbook (raw queries, edge cases, plugin-specific flush commands): `references/editing-existing-content.md` — read it only when the scripts can't be used.
+> Full manual runbook for editing/locating/cache (raw queries, edge cases, plugin-specific flush commands): **`references/editing-existing-content.md`** — read it only when the scripts can't be used.
 
 ## Authors
 
 ```bash
-ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp user list --fields=ID,user_login,display_name --format=json 2>/dev/null'
+ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp user list --fields=ID,user_login,display_name --format=json'
 ```
 
-Common pattern for AI-assisted blogs: separate author accounts for human posts vs. agent-authored posts.
-
-## Post Content Format
-
-Use WordPress block format (Gutenberg):
-
-```html
-<!-- wp:paragraph -->
-<p>Paragraph text here.</p>
-<!-- /wp:paragraph -->
-
-<!-- wp:heading -->
-<h2>Section Heading</h2>
-<!-- /wp:heading -->
-
-<!-- wp:code -->
-<pre class="wp-block-code"><code>code here</code></pre>
-<!-- /wp:code -->
-
-<!-- wp:list -->
-<ul>
-<li>List item</li>
-</ul>
-<!-- /wp:list -->
-```
-
-## Author Signatures (optional)
-
-Append at end of AI-authored posts:
-
-```html
-<!-- wp:separator -->
-<hr class="wp-block-separator has-alpha-channel-opacity"/>
-<!-- /wp:separator -->
-
-<!-- wp:paragraph {"style":{"typography":{"fontSize":"14px"},"color":{"text":"#888888"}}} -->
-<p style="font-size:14px;color:#888888"><em>Written by <strong>Your Agent Name</strong> — AI agent (OpenClaw / Claude)<br>First-person perspective from an AI execution engine</em></p>
-<!-- /wp:paragraph -->
-```
+Common pattern for AI-assisted blogs: separate author accounts for human vs. agent-authored posts.
 
 ## Security Notes
 
-**`StrictHostKeyChecking=accept-new`:** Used throughout SSH/SCP commands as the default. This trusts a host on first connection and rejects changed keys on subsequent connections — protecting against MITM attacks after the initial connect. Suitable for user-configured hosts on trusted LANs (e.g., Proxmox LXC containers).
+**`StrictHostKeyChecking=accept-new`** (the default here) trusts a host on first connect and rejects changed keys after — MITM protection post-connect, suitable for user-configured hosts on trusted LANs. **Best:** pre-populate the key once (`ssh-keyscan -H <wp-host> >> ~/.ssh/known_hosts`) and drop the flag. **CI/ephemeral only:** `-o StrictHostKeyChecking=no` disables verification — not for interactive/persistent use.
 
-**Best security — pre-populate known_hosts:** Pre-populate the host key once, then remove `-o StrictHostKeyChecking=...` from all commands entirely:
-```bash
-ssh-keyscan -H <wp-host> >> ~/.ssh/known_hosts
-```
+**1Password SSH agent (macOS):** commands reference `SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"` to sign via Touch ID without private keys on disk (needs `pty: true`). On Linux, the standard `SSH_AUTH_SOCK` is used.
 
-**Ephemeral/CI environments only:** Use `-o StrictHostKeyChecking=no` to skip host verification entirely. This disables MITM protection and should only be used in isolated, trusted environments (e.g., CI pipelines with known, ephemeral hosts). Not recommended for interactive or persistent use.
-
-**1Password SSH agent socket:** On macOS, SSH commands reference `SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"` to authenticate via the 1Password SSH agent. This is the standard macOS 1Password agent path — it allows SSH key signing via Touch ID without writing private keys to disk. The agent socket is only accessed when `pty: true` is set on exec calls (required for Touch ID prompt). On Linux or when using a different SSH agent, the standard `SSH_AUTH_SOCK` is used instead.
-
-**Credentials used:**
-- **SSH key** — via ssh-agent (1Password agent on macOS, standard agent on Linux). Never written to disk by this skill.
-- **WP application password** — retrieved at runtime via `op item get --reveal` (1Password CLI) when using the REST API path. The `--reveal` flag outputs the plaintext password to stdout, where it is captured into a shell variable (`WP_PASS`). It is not written to disk but is visible in the agent's execution context during the session. This is standard for 1Password CLI workflows; `op://` secret references are not supported by curl. Not cached to disk.
-- **Config values** (WP_HOST, WP_SSH_USER, WP_ROOT) — declared as required env vars via `requires.env` in metadata. Set in `skills.entries.wordpress-selfhosted.env` in `openclaw.json`, or as shell environment variables. Falls back to TOOLS.md if present. WP_USER and WP_1P_ITEM are optional and can also be set via TOOLS.md or env.
-
-## Featured Images
-
-```bash
-# SCP image to host first, then import
-ssh <ssh-user>@<wp-host> 'cd <wp-root> && \
-  ATTACH_ID=$(wp media import /tmp/image.png --title="Image Title" --porcelain 2>/dev/null) && \
-  wp post meta update POST_ID _thumbnail_id $ATTACH_ID 2>/dev/null'
-```
+**Capabilities & footprint** (declared for transparency):
+- **Network:** SSH/SCP to the user-configured `WP_HOST` only; `curl` to the public URL passed to `purge-verify.sh` (and, on the REST path, HTTPS to that host's `/wp-json`). No other endpoints, no telemetry.
+- **Credentials:** SSH key via ssh-agent (never written to disk). On the REST path, a WP application password is read at runtime via `op item get --reveal` into a shell variable (`op://` references aren't supported by curl) — not cached to disk. Config values `WP_HOST`/`WP_SSH_USER`/`WP_ROOT` are gated env vars (`requires.env`); `WP_USER`/`WP_1P_ITEM` optional.
+- **File writes:** temporary `/tmp/*.html` content files (mode 600 via `umask 077`), SCP'd to the host and cleaned up after use. Helper scripts remove their remote temp files automatically.

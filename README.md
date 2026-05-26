@@ -37,7 +37,7 @@ Once configured, ask your agent things like:
 
 ## Compatibility
 
-Works with any agent that can read markdown — OpenClaw, Claude Code, Codex, Cursor, or any tool that accepts instruction files. The `SKILL.md` frontmatter is OpenClaw/ClawHub packaging; the runbook content is agent-agnostic.
+Works with any markdown-reading tool — OpenClaw, Claude Code, Codex, Cursor, or similar. The `SKILL.md` frontmatter is OpenClaw/ClawHub packaging; the runbook content is platform-agnostic.
 
 ## License
 
