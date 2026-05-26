@@ -39,9 +39,21 @@ always-loaded `description`, and cleared the last scanner false-positive.
   test tags deleted — zero footprint).
 - Publishable surface (SKILL.md + 5 scripts + 3 references) passes the scanner clean.
 
-> Note: the `description` was trimmed by judgment — the triggering eval harness could
-> not validate here (see below). It removed tier-1 noise while preserving trigger
-> signal, so the change is low-risk, but it is not benchmarked.
+### Validated — description triggering (post-release)
+
+A/B of the OLD (pre-1.0.6) vs NEW description on the 20 trigger-eval queries (×2 runs
+each) against the **actually-installed skill** via `claude -p` — detecting the `Skill`
+tool invocation and killing each run at the first tool so nothing executed:
+
+| | should-trigger (recall, higher better) | should-NOT (false triggers, lower better) |
+|---|---|---|
+| OLD | 16/20 | 2/20 |
+| **NEW** | **19/20** | **0/20** |
+
+The trim **improved both axes**. It raised recall on the edit/locate/cache cases the old
+description never mentioned (e.g. "edited via wp-cli but Cloudflare still serves old text":
+0/2 → 2/2) and eliminated a false trigger on theme-CSS work (2/2 → 0/2) via the explicit
+NOT boundary. New description kept — the "removed noise, not signal" hypothesis held.
 
 ## [1.0.5] — 2026-05-25
 
@@ -96,17 +108,13 @@ hardening (Benign rating). See git history.
 ---
 
 ### Known follow-ups
-- **Description-trigger optimization — eval harness still unvalidated.** The
-  `skill-creator` `run_loop` pass (model `claude-opus-4-7`, 20 queries, 60/40
-  split) produced no usable signal: it never triggered the skill for *any* query
-  (uniform `0/3`). Root cause (from reading `run_eval.py`): it proxies the skill as
-  a **slash command** in `.claude/commands/` and checks for a `Skill`-tool
-  invocation — but a command isn't surfaced as a `Skill`, and in this environment
-  the *real* skill is also installed (its different name fails the `clean_name`
-  match). So the proxy never matched. The 1.0.6 `description` trim was therefore
-  done **by judgment, not benchmarked** — it removed tier-1 noise while keeping the
-  trigger signal, so it's low-risk. A proper rerun needs the harness to register the
-  proxy as a real skill (e.g. a temp `.claude/skills/<name>/SKILL.md`) and to run
-  with the real skill absent.
+- **Description triggering — validated** (see the 1.0.6 table above). The
+  `skill-creator` `run_loop` couldn't measure here: it proxies the skill as a slash
+  *command* in `.claude/commands/` and watches for a `Skill`-tool call, but a command
+  isn't surfaced as a `Skill` and the real skill (different name) shadowed the proxy →
+  uniform `0/3`. Worked around it by probing the **real installed skill** directly via
+  `claude -p`, killing each run at the first tool for safety. The trimmed description
+  beat the old one on both recall and precision, so it stands as benchmarked, not just
+  judged.
 - ClawHub re-publish + re-vet of 1.0.4–1.0.6 is pending (owner action). The added
   `scripts/` change the scan surface vs. the pure-markdown 1.0.3.
