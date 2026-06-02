@@ -2,7 +2,7 @@
 name: wordpress-selfhosted
 license: MIT
 description: "Create, edit, publish, or delete content on a self-hosted WordPress site over SSH+WP-CLI (or the REST API when the host is reachable directly over HTTPS): posts, pages, and the visible text on them. Use it to draft and publish posts (with SEO/Yoast meta, categories, tags, featured images, author assignment), edit existing copy (header, hero, footer, about page), fix a typo on a live page, find where a string lives across the database or theme and replace it, and purge caches after a change — down to a single one-line edit. For WordPress the user hosts themselves on LXC, VPS, or bare-metal, often behind Cloudflare or a reverse proxy (typically signaled by an SSH login plus a wp-root path). NOT for WordPress.com-hosted blogs, theme CSS/layout or plugin development, or server-to-server site migrations."
-metadata: { "openclaw": { "emoji": "📝", "requires": { "bins": ["ssh", "scp", "curl", "jq", "wp"], "anyBins": ["op"], "env": ["WP_HOST", "WP_SSH_USER", "WP_ROOT"] }, "os": ["darwin", "linux"] } }
+metadata: { "openclaw": { "emoji": "📝", "requires": { "bins": ["ssh", "scp", "curl", "jq"], "anyBins": ["op"], "env": ["WP_HOST", "WP_SSH_USER", "WP_ROOT"] }, "os": ["darwin", "linux"] } }
 ---
 
 # WordPress Self-Hosted
@@ -19,6 +19,8 @@ Manage a self-hosted WordPress site via SSH+WP-CLI (primary) or WP REST API (whe
 **Helper scripts** (in `scripts/`, run over SSH, read the env vars above):
 `create-post.sh`, `set-post-meta.sh`, `set-featured-image.sh`, `locate-string.sh`, `purge-verify.sh`.
 Prefer these for their deterministic step — the body keeps only the judgment.
+
+**Remote host requirement:** WP-CLI (`wp`) must be installed on the WordPress host at `WP_HOST`, not on the local machine. Local requirements are only the connection and parsing tools used to reach that host: `ssh`, `scp`, `curl`, and `jq`.
 
 ## Connection Decision Tree
 

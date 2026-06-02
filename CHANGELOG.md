@@ -4,6 +4,13 @@ All notable changes to the `wordpress-selfhosted` skill. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Versioning is tracked in commit
 messages (no git tags).
 
+## [Unreleased]
+
+### Changed
+- Removed local `wp` from OpenClaw `requires.bins`; only local connection/parsing tools
+  (`ssh`, `scp`, `curl`, `jq`) are gated now. Documented that WP-CLI (`wp`) must exist
+  on the remote WordPress host at `WP_HOST`.
+
 ## [1.0.6] — 2026-05-25
 
 Extended the token-economics refactor to the original create-flow, trimmed the

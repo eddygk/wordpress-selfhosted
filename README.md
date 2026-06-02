@@ -12,15 +12,15 @@ An agent skill for managing self-hosted WordPress sites via SSH+WP-CLI and WP RE
 
 ## Requirements
 
-- `ssh`, `scp`, `wp-cli` — primary method
-- `curl`, `jq` — for REST API (when available)
+- `ssh`, `scp`, `curl`, `jq` — local tools
 - `op` (optional) — 1Password CLI for credential hydration
+- `wp` / WP-CLI — required on the remote WordPress host at `WP_HOST`
 - A self-hosted WordPress install (LXC, VPS, bare-metal)
 
 ## Quick Setup
 
 1. Update `TOOLS.md` with your `WP_HOST`, `WP_USER`, `WP_SSH_USER`, `WP_ROOT`, and `WP_1P_ITEM`
-2. Confirm SSH access works: `ssh <WP_SSH_USER>@<WP_HOST> 'wp --info'`
+2. Confirm remote WP-CLI works: `ssh <WP_SSH_USER>@<WP_HOST> 'wp --info'`
 
 ## Usage
 
