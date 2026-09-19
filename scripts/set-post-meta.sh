@@ -21,7 +21,17 @@ while [ $# -gt 0 ]; do
     --focuskw)  FOCUSKW="$2";  shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
-done
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY_BIN="python3"
+command -v python3 >/dev/null 2>&1 || PY_BIN="python"
+
+if [ -n "$METADESC" ]; then
+  echo "$METADESC" | "${PY_BIN}" "${SCRIPT_DIR}/validate-sanitization.py" - || exit 1
+fi
+if [ -n "$FOCUSKW" ]; then
+  echo "$FOCUSKW" | "${PY_BIN}" "${SCRIPT_DIR}/validate-sanitization.py" - || exit 1
+fi
+
 : "${WP_HOST:?set WP_HOST}"; : "${WP_SSH_USER:?set WP_SSH_USER}"; : "${WP_ROOT:?set WP_ROOT}"
 
 OP_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"

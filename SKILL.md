@@ -69,18 +69,30 @@ Temp files hold post HTML only — never credentials. (The `create-post.sh` / `s
    ```bash
    ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp post list --post_status=publish --fields=ID,post_title,post_name --format=json'
    ```
-2. **Write the body** to a local `.html` file in Gutenberg block format — see **`references/post-format.md`** (blocks + optional author signature).
+2. **Write the body** to a local `.html` file in clean Gutenberg block format — see **`references/post-format.md`** (pure editorial content; author signatures and persona attribution are handled automatically at the theme template layer via `--author`).
+   - **Mandatory Sanitization SOP (Full Surface Audit):** Enforce RFC-compliant placeholders across all layers:
+     - Domains: RFC 2606/6761 `example.com`, `client.example.com` (never real client, internal, or production domains).
+     - Network: RFC 5737 public IPs (`203.0.113.0/24`), RFC 1918 generic documentation subnets (`10.0.10.0/24`, `172.16.10.0/24`, `192.168.1.100`). Never leak real private infrastructure subnets or router IPs.
+     - Physical Locations: Never leak physical street names, geographic landmarks, or personal room labels -> use `primary site`, `workstation VM`.
+     - Hardware Specs: Never leak retail CPU/GPU hardware models, enterprise chassis tags, or personal drive brands -> use `8-core desktop processor`, `workstation GPU`, `1U enterprise rack server`.
+     - Hostnames & Daemons: Never leak cluster hypervisor nodes or tunnel daemon identifiers -> use `primary-hypervisor`, `pbs-storage`, `homelab-ingress`.
+     - Tokens & UUIDs: Explicit bracketed placeholders (`<YOUR-TUNNEL-UUID>`, `<YOUR-TUNNEL-TOKEN>`).
+     - Full SOP: **`references/post-format.md#rfc-compliant-placeholders--sanitization-sop`**.
 3. **Create** (returns the new ID):
    ```bash
    scripts/create-post.sh --file /tmp/post-content.html --title "Post Title" --status draft --author <user-id>
    ```
+   *(Note: `create-post.sh` automatically runs `validate-gutenberg.py` and `validate-sanitization.py` on the content and title before submission).*
 4. **Set taxonomy + SEO**:
    ```bash
    scripts/set-post-meta.sh <ID> --category <slug> --tags "tag1 tag2" \
      --metadesc "120–155 char description" --focuskw "focus keyphrase"
    ```
+   *(Note: `set-post-meta.sh` automatically runs `validate-sanitization.py` on metadesc and focuskw).*
 5. **Featured image** (optional): `scripts/set-featured-image.sh <ID> /path/to/image.png "Title"`
-6. **SEO check before publishing**: meta description (120–155 chars), focus keyphrase, 2–3 internal links, 5–7 tags, category, featured image.
+6. **Pre-flight verification before publishing**:
+   - **RFC Placeholders & Security Sanitization**: Run `python3 scripts/validate-sanitization.py <file.html>` to verify zero leaks. Audit `wp_postmeta` (`_yoast_wpseo_metadesc`, `_tldr_takeaways`) and media alt text (`_wp_attachment_image_alt`).
+   - **SEO Check**: meta description (120–155 chars), focus keyphrase, 2–3 internal links, 5–7 tags, category, featured image. Score 90+ via `analyze_seo.py`.
 7. **Publish**: `ssh <ssh-user>@<wp-host> 'cd <wp-root> && wp post update <ID> --post_status=publish'`
 
 ## Editing Existing Content

@@ -21,6 +21,16 @@ while [ $# -gt 0 ]; do
 done
 { [ -n "$FILE" ] && [ -f "$FILE" ]; } || { echo "usage: $0 --file <local.html> --title \"...\" [--type post|page] [--status draft] [--author <id>]" >&2; exit 2; }
 [ -n "$TITLE" ] || { echo "--title is required" >&2; exit 2; }
+
+# Pre-flight validation: verify Gutenberg blocks, title, and RFC/security sanitization
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY_BIN="python3"
+command -v python3 >/dev/null 2>&1 || PY_BIN="python"
+
+"${PY_BIN}" "${SCRIPT_DIR}/validate-gutenberg.py" "$FILE" || exit 1
+"${PY_BIN}" "${SCRIPT_DIR}/validate-sanitization.py" "$FILE" || exit 1
+echo "$TITLE" | "${PY_BIN}" "${SCRIPT_DIR}/validate-sanitization.py" - || exit 1
+
 : "${WP_HOST:?set WP_HOST}"; : "${WP_SSH_USER:?set WP_SSH_USER}"; : "${WP_ROOT:?set WP_ROOT}"
 
 OP_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
